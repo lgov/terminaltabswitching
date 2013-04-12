@@ -1,10 +1,49 @@
 #import "JRSwizzle.h"
+#include <Carbon/Carbon.h>
 
 @implementation NSWindowController(TerminalTabSwitching)
 - (void)selectRepresentedTabViewItem:(NSMenuItem*)item
 {
 	NSTabViewItem* tabViewItem = [item representedObject];
 	[[tabViewItem tabView] selectTabViewItem:tabViewItem];
+}
+
+unichar keyEquivalents[10];
+
+- (UniChar)convertKeyCode:(UInt16)keyCode
+{
+    TISInputSourceRef currentKeyboard = TISCopyCurrentKeyboardInputSource();
+    CFDataRef layoutData =
+    TISGetInputSourceProperty(currentKeyboard,
+                              kTISPropertyUnicodeKeyLayoutData);
+    const UCKeyboardLayout *keyboardLayout =
+    (const UCKeyboardLayout *)CFDataGetBytePtr(layoutData);
+    UInt32 deadKeyState;
+    UniCharCount len;
+    UniChar chars[4];
+
+    UCKeyTranslate(keyboardLayout, keyCode, kUCKeyActionDisplay,
+                   0, /* No modifier key pressed */
+                   LMGetKbdType(),
+                   kUCKeyTranslateNoDeadKeysBit,
+                   &deadKeyState,
+                   4,
+                   &len,
+                   chars);
+
+    return chars[0];
+}
+
+- (void)setupKeyCodes
+{
+    /* convert keyboard keys 1234567890 to their keycodes, so they are also
+       recognized on international keyboards. */
+    const unichar number_keys[] = { 0x12, 0x13, 0x14, 0x15, 0x17, 0x16, 0x1a,
+        0x1c, 0x19, 0x1d };
+
+    for (int i = 0; i < sizeof(number_keys) /sizeof(number_keys[0]); i++) {
+        keyEquivalents[i] = [self convertKeyCode:number_keys[i] ];
+    }
 }
 
 - (void)updateTabListMenu
@@ -22,7 +61,9 @@
 	NSArray* tabViewItems = [[self valueForKey:@"tabView"] tabViewItems];
 	for(size_t tabIndex = 0; tabIndex < [tabViewItems count]; ++tabIndex)
 	{
-		NSString* keyEquivalent = (tabIndex < 10) ? [NSString stringWithFormat:@"%ld", (tabIndex+1)%10] : @"";
+        const unichar key = (tabIndex < 10) ? keyEquivalents[tabIndex] : '\0';
+
+		NSString* keyEquivalent = key ? [NSString stringWithFormat:@"%C", key] : @"";
 		NSTabViewItem* tabViewItem = [tabViewItems objectAtIndex:tabIndex];
 		NSMenuItem* menuItem = [[NSMenuItem alloc] initWithTitle:[tabViewItem label]
 														  action:@selector(selectRepresentedTabViewItem:)
@@ -99,6 +140,8 @@
 
 	NSApplication *app = [NSApplication sharedApplication];
 	NSWindow *mainWindow = [app mainWindow];
+
+    [[mainWindow windowController] setupKeyCodes];
 
 	// NOTE The issue of timing to install SIMBL hook, we need to exclude the window already laoded here.
 	// After loaded, we can exclude new windows inside windowDidLoad callback method.
